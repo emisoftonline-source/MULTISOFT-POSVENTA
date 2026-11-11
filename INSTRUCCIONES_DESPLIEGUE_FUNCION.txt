@@ -1,0 +1,31 @@
+MULTISOFT - Despliegue de multisoft-crear-responsable
+
+IMPORTANTE
+- Este paquete contiene el código y la configuración local, pero NO despliega nada por sí solo.
+- No contiene tokens ni claves secretas.
+- No compartas ni pegues aquí la clave service_role / secret.
+- No ejecutes nuevamente los archivos SQL del esquema.
+
+REQUISITOS
+1. Tener instalado Docker Desktop (abierto) y Supabase CLI.
+2. Abrir PowerShell dentro de la carpeta "SISTEMA MULTISERVICIOS".
+3. Tener acceso de administrador al proyecto Supabase multisoft-staging.
+
+COMANDOS (PowerShell)
+  supabase login
+  supabase link --project-ref ydsjmrhphpdccleykslu
+  supabase functions deploy multisoft-crear-responsable
+
+Si el CLI solicita una contraseña de base de datos, usa la contraseña de base de datos del proyecto Supabase; no la publiques.
+
+VERIFICACIÓN
+- En Supabase Dashboard > Edge Functions, confirmar que aparezca multisoft-crear-responsable.
+- Revisar los logs de la función después de una prueba.
+- Iniciar sesión en MULTISOFT como superadministrador y crear un responsable de prueba.
+- Confirmar que se creó en Authentication, public.perfiles y public.membresias.
+
+SEGURIDAD Y LIMITACIONES
+- La función exige que el usuario que llama tenga perfil activo y es_superadmin=true.
+- SUPABASE_URL, SUPABASE_ANON_KEY y SUPABASE_SERVICE_ROLE_KEY se leen en el entorno servidor; jamás colocar service_role en el HTML.
+- No he podido desplegarla directamente porque esta sesión no tiene acceso administrativo autenticado al proyecto Supabase ni un conector de despliegue. Debes ejecutar los comandos con tu sesión autorizada.
+- Crear cuentas no significa que el inicio de sesión de los responsables y todos los módulos del POS estén ya migrados. Probar en staging; no usar todavía para ventas reales.

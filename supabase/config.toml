@@ -1,0 +1,7 @@
+project_id = "ydsjmrhphpdccleykslu"
+
+[functions.multisoft-crear-responsable]
+verify_jwt = true
+
+[functions.multisoft-gestionar-usuarios]
+verify_jwt = true
