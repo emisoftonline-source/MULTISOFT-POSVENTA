@@ -565,6 +565,24 @@
     </div>
 </div>
 
+<!-- Modal: reiniciar los datos de un negocio (solo superadministrador) -->
+<div id="reinicioModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:10003; align-items:center; justify-content:center; padding:20px;">
+    <form class="card" onsubmit="event.preventDefault(); msConfirmarReinicio();" style="width:100%; max-width:520px; background:white; padding:25px; border-radius:12px; border-top:6px solid var(--danger);">
+        <h3 style="margin-top:0; color:var(--danger); text-align:center;">⚠️ Reiniciar datos del negocio</h3>
+        <p style="text-align:center; margin:0 0 10px;"><strong id="reinicioNegocio"></strong></p>
+        <p style="font-size:0.9rem; margin:0 0 8px;">Se <strong>borrarán para siempre</strong> todos sus datos. <strong>No se puede deshacer.</strong></p>
+        <div id="reinicioConteo" style="background:#fdedec; border-radius:8px; padding:10px 14px; font-size:0.88rem; max-height:220px; overflow:auto;">⏳ Calculando...</div>
+        <p style="font-size:0.85rem; color:#555; margin:10px 0;">Se conservan: el negocio y su configuración (nombre, logo), sus sucursales, sus usuarios y el "Cliente General". La numeración de ventas vuelve a empezar en #1. Los demás negocios no se tocan.</p>
+        <label for="reinicioCodigo">Para confirmar, escribe el código del negocio: <code id="reinicioCodigoMuestra"></code></label>
+        <input id="reinicioCodigo" autocomplete="off" autocapitalize="off" spellcheck="false" oninput="msValidarReinicio()">
+        <div id="reinicioMsg" role="status" style="margin-top:10px; text-align:center;"></div>
+        <div style="display:flex; gap:10px; margin-top:16px;">
+            <button type="submit" id="reinicioBtn" class="btn btn-danger" style="flex:2;" disabled>BORRAR TODO Y REINICIAR</button>
+            <button type="button" id="reinicioCancelar" class="btn" onclick="msCerrarReinicio()" style="flex:1; background:#7f8c8d; color:#fff;">CANCELAR</button>
+        </div>
+    </form>
+</div>
+
 <!-- Aviso de cierre de sesión por inactividad -->
 <div id="inactividadModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10002; align-items:center; justify-content:center; padding:20px;">
     <div class="card" style="width:100%; max-width:380px; background:white; padding:25px; border-radius:12px; text-align:center;">
@@ -2662,7 +2680,8 @@ async function msCargarNegocios() {
             if (rubros.some(r => r.id === prev)) rubroSelect.value = prev;
         }
         const rubroMap = Object.fromEntries(rubros.map(r => [r.id, r.nombre]));
-        if (body) body.innerHTML = (negociosRes.data || []).length ? negociosRes.data.map(n => `<tr><td>${msEscape(n.nombre)}</td><td>${msEscape(n.codigo)}</td><td>${msEscape(rubroMap[n.rubro_id] || 'Rubro no disponible')}</td><td>${msEscape(n.plan || 'basico')}</td><td>${n.activo ? '🟢 Activo' : '🔴 Inactivo'}</td><td><button onclick="msCambiarEstadoNegocio('${msEscape(n.id)}',${!n.activo})">${n.activo ? 'Desactivar' : 'Activar'}</button></td></tr>`).join('') : '<tr><td colspan="6">Todavía no hay negocios registrados.</td></tr>';
+        window.msNegociosLista = negociosRes.data || [];
+        if (body) body.innerHTML = (negociosRes.data || []).length ? negociosRes.data.map(n => `<tr><td>${msEscape(n.nombre)}</td><td>${msEscape(n.codigo)}</td><td>${msEscape(rubroMap[n.rubro_id] || 'Rubro no disponible')}</td><td>${msEscape(n.plan || 'basico')}</td><td>${n.activo ? '🟢 Activo' : '🔴 Inactivo'}</td><td style="white-space:nowrap;"><button onclick="msCambiarEstadoNegocio('${msEscape(n.id)}',${!n.activo})">${n.activo ? 'Desactivar' : 'Activar'}</button> <button class="btn btn-danger" style="padding:5px 10px;font-size:.8rem;" title="Borrar todos los datos de este negocio (ventas, productos, clientes...) para empezar de cero" onclick="msAbrirReinicio('${msEscape(n.id)}')">🔄 Reiniciar datos</button></td></tr>`).join('') : '<tr><td colspan="6">Todavía no hay negocios registrados.</td></tr>';
     } catch (e) {
         console.error('Error cargando negocios MULTISOFT:', e);
         if (body) body.innerHTML = `<tr><td colspan="6">No se pudieron cargar los negocios: ${msEscape(e.message || 'Error de permisos o conexión')}</td></tr>`;
@@ -2701,6 +2720,91 @@ async function msCrearNegocio() {
         msSetNegocioMsg(`No se pudo crear el negocio. ${e.message || 'Comprueba conexión y permisos.'}`, true);
     } finally { btn.disabled = false; btn.textContent = '➕ Crear negocio'; }
 }
+// ---- REINICIAR LOS DATOS DE UN NEGOCIO (solo superadministrador; script 14) ----
+const MS_TABLAS_REINICIO = {
+    ventas: 'Ventas', venta_items: 'Productos vendidos (detalle)', venta_pagos: 'Pagos y abonos',
+    cajas: 'Cajas', caja_movimientos: 'Movimientos de caja', productos: 'Productos', inventario: 'Inventario (stock)',
+    categorias: 'Categorías', movimientos_inventario: 'Movimientos de inventario', precios_historial: 'Historial de precios',
+    clientes: 'Clientes', proveedores: 'Proveedores', compras: 'Compras', compra_items: 'Productos comprados (detalle)',
+    contadores: 'Numeración', auditoria: 'Registros de auditoría'
+};
+let msReinicio = null;
+function msTablaConteo(filas) {
+    const items = Object.entries(filas || {}).filter(([, n]) => Number(n) > 0);
+    if (!items.length) return '<em>Este negocio no tiene datos para borrar.</em>';
+    const total = items.reduce((s, [, n]) => s + Number(n), 0);
+    return `<strong>${total} registros:</strong><ul style="margin:6px 0 0; padding-left:18px;">` +
+        items.map(([t, n]) => `<li>${msEscape(MS_TABLAS_REINICIO[t] || t)}: <strong>${Number(n)}</strong></li>`).join('') + '</ul>';
+}
+function msErrorReinicio(e) {
+    const m = String((e && e.message) || e || '');
+    if ((e && e.code === 'PGRST202') || /Could not find the function/i.test(m)) return 'Falta ejecutar en Supabase el script 14_reiniciar_negocio.sql.';
+    return m || 'Error desconocido';
+}
+async function msAbrirReinicio(id) {
+    const n = (window.msNegociosLista || []).find(x => x.id === id);
+    if (!n || !loggedUser || loggedUser.rol !== 'SUPER_ADMIN') return;
+    msReinicio = n;
+    document.getElementById('reinicioNegocio').textContent = `${n.nombre} (${n.codigo})`;
+    document.getElementById('reinicioCodigoMuestra').textContent = n.codigo;
+    document.getElementById('reinicioCodigo').value = '';
+    document.getElementById('reinicioMsg').textContent = '';
+    document.getElementById('reinicioBtn').disabled = true;
+    const box = document.getElementById('reinicioConteo');
+    box.innerHTML = '⏳ Calculando cuántos registros se borrarán...';
+    document.getElementById('reinicioModal').style.display = 'flex';
+    try {
+        const r = await window.multisoftSupabase.rpc('reiniciar_negocio', { p_negocio: n.id, p_confirmacion: n.codigo, p_simular: true });
+        if (r.error) throw r.error;
+        box.innerHTML = msTablaConteo(r.data && r.data.filas);
+    } catch (e) { console.error(e); box.innerHTML = `<span style="color:#b42318;">No se pudo calcular: ${msEscape(msErrorReinicio(e))}</span>`; }
+    document.getElementById('reinicioCodigo').focus();
+}
+function msValidarReinicio() {
+    const ok = msReinicio && document.getElementById('reinicioCodigo').value.trim() === msReinicio.codigo;
+    document.getElementById('reinicioBtn').disabled = !ok;
+}
+function msCerrarReinicio() { msReinicio = null; document.getElementById('reinicioModal').style.display = 'none'; }
+async function msConfirmarReinicio() {
+    const n = msReinicio; if (!n) return;
+    const codigo = document.getElementById('reinicioCodigo').value.trim();
+    if (codigo !== n.codigo) return;
+    if (!confirm(`ÚLTIMA CONFIRMACIÓN\n\n¿Borrar TODOS los datos de "${n.nombre}"?\nEsta acción no se puede deshacer.`)) return;
+    const btn = document.getElementById('reinicioBtn'), cancelar = document.getElementById('reinicioCancelar'), msg = document.getElementById('reinicioMsg');
+    btn.disabled = true; cancelar.disabled = true; btn.textContent = '⏳ Borrando...';
+    try {
+        const db = window.multisoftSupabase;
+        const r = await db.rpc('reiniciar_negocio', { p_negocio: n.id, p_confirmacion: codigo, p_simular: false });
+        if (r.error) throw r.error;
+        // Fotos de productos en Storage (no se pueden borrar con SQL). Si falla, se avisa: los datos ya se borraron.
+        let avisoFotos = '';
+        try {
+            const carpeta = `${n.id}/productos`;
+            const ls = await db.storage.from('negocios').list(carpeta, { limit: 1000 });
+            if (ls.error) throw ls.error;
+            const rutas = (ls.data || []).filter(f => f && f.name).map(f => `${carpeta}/${f.name}`);
+            for (let i = 0; i < rutas.length; i += 100) {
+                const rm = await db.storage.from('negocios').remove(rutas.slice(i, i + 100));
+                if (rm.error) throw rm.error;
+            }
+        } catch (e) {
+            console.warn('Fotos no borradas:', e);
+            avisoFotos = `\n\nLas fotos de productos no se pudieron borrar automáticamente. Bórralas en Supabase → Storage → negocios → carpeta ${n.id}.`;
+        }
+        document.getElementById('reinicioConteo').innerHTML = '✅ Borrado. ' + msTablaConteo(r.data && r.data.filas);
+        msCerrarReinicio();
+        alert(`✅ "${n.nombre}" quedó en cero y listo para empezar en producción.\nLa próxima venta será la #1.${avisoFotos}`);
+        msSetNegocioMsg(`Datos de ${n.nombre} reiniciados.`);
+        await msCargarNegocios();
+    } catch (e) {
+        console.error(e);
+        msg.style.color = '#b42318';
+        msg.textContent = 'No se borró nada: ' + msErrorReinicio(e);
+    } finally {
+        btn.textContent = 'BORRAR TODO Y REINICIAR'; cancelar.disabled = false; msValidarReinicio();
+    }
+}
+
 async function msCambiarEstadoNegocio(id, activo) {
     if (!loggedUser || loggedUser.rol !== 'SUPER_ADMIN' || !window.multisoftSupabase) return;
     const confirmText = activo ? '¿Activar este negocio?' : '¿Desactivar este negocio? Sus datos no se borrarán.';
